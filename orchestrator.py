@@ -26,11 +26,7 @@ if not SLACK:
     exit(1)
 
 GH_API  = "https://api.github.com/graphql"
-# X-Github-Next-Global-ID başlığını şimdilik kaldıralım, işe yaramadı.
-HEADERS = {
-    "Authorization": f"Bearer {TOKEN}"
-    # "X-Github-Next-Global-ID": "1" # <<<--- KALDIRILDI
-}
+HEADERS = {"Authorization": f"Bearer {TOKEN}"} # X-Github-Next-Global-ID başlığı kaldırıldı
 
 gh   = Github(TOKEN)
 repo = gh.get_repo(REPO_FULL)
@@ -47,9 +43,9 @@ def gql(query: str, variables: dict | None = None):
         if "errors" in json_resp:
             print(f"❌ GraphQL Query Error: {json.dumps(json_resp['errors'], indent=2)}")
             return None
-        # Veri kısmı yoksa veya boşsa da None döndürelim (sorgu başarılı ama sonuç yoksa)
         if "data" not in json_resp or not json_resp["data"]:
-             print(f"ℹ️ GraphQL query successful but returned no data or null data: {json_resp}")
+             # Sorgu başarılı olsa bile veri yoksa veya null ise None döndür
+             # print(f"ℹ️ GraphQL query successful but returned no data or null data: {json_resp}")
              return None
         return json_resp
     except requests.exceptions.Timeout:
@@ -94,9 +90,8 @@ def fetch_project_ids():
         ... on ProjectV2 {
           field(name:"Status"){
             ... on ProjectV2SingleSelectField {
-              id # <<<--- Alanın kendi Global ID'si
+              id # Alanın kendi Global ID'si
               name
-              # options { id name } # Artık seçenek ID'lerini buradan almıyoruz
             }
           }
         }
@@ -105,46 +100,56 @@ def fetch_project_ids():
     field_resp = gql(q_field, {"p": project_id})
     if not field_resp: raise ValueError("Status alanı sorgusu başarısız.")
     try:
-        sf = field_resp.get("data", {}).get("node", {}).get("field")
-        if not sf: raise KeyError("'Status' alanı ('field') yanıtta bulunamadı.")
-        status_field_id = sf.get("id")
+        sf_data = field_resp.get("data", {}).get("node", {}).get("field")
+        if not sf_data: raise KeyError("'Status' alanı ('field') yanıtta bulunamadı.")
+        status_field_id = sf_data.get("id")
         if not status_field_id: raise ValueError("Status alanı için 'id' değeri bulunamadı.")
         print(f"DEBUG: Found Status Field Global ID: {status_field_id}")
     except KeyError as e:
         raise ValueError(f"Status field ID'si alınırken yapı hatası: {e}") from e
 
-    # 3) "Dev" Seçeneğinin Global Node ID'sini al (Yeni sorgu ile)
-    q_option_node_id = """
-    query($field_id: ID!, $option_name: String!) {
+    # 3) Alan ID'sini kullanarak seçenekleri (ve umarız Global ID'lerini) al
+    q_options_list = """
+    query($field_id: ID!) {
       node(id: $field_id) {
         ... on ProjectV2SingleSelectField {
-          options(filterBy: {name: $option_name}, first: 1) {
-            nodes {
-              id # <<<--- Bu ID'nin Global Node ID olmasını bekliyoruz
-              name
-            }
+          # Tekrar tüm seçenekleri isteyelim
+          options {
+            id # <<<--- Bu ID'nin Global Node ID (PVTO_...) olmasını umuyoruz!
+            name
           }
         }
       }
     }
     """
-    dev_option_name = "Dev"
-    option_resp = gql(q_option_node_id, {"field_id": status_field_id, "option_name": dev_option_name})
-    if not option_resp: raise ValueError(f"'{dev_option_name}' seçeneği için Node ID sorgusu başarısız.")
+    options_resp = gql(q_options_list, {"field_id": status_field_id})
+    if not options_resp: raise ValueError("Status alanı seçenekleri sorgusu başarısız.")
+
     try:
-        # Yanıtı dikkatlice ayrıştır
-        options_nodes = option_resp.get("data", {}).get("node", {}).get("options", {}).get("nodes", [])
-        if not options_nodes:
-            # Seçenek bulunamadıysa daha net hata ver
-            raise ValueError(f"'{dev_option_name}' isimli seçenek Status alanı ({status_field_id}) içinde bulunamadı.")
+        # Yanıttan seçenekler listesini al
+        options_list = options_resp.get("data", {}).get("node", {}).get("options", [])
+        if not options_list:
+             raise ValueError(f"Status alanı ({status_field_id}) için seçenek listesi alınamadı veya boş.")
 
-        dev_option_node_id = options_nodes[0].get("id")
+        print(f"DEBUG: Options received from second query: {json.dumps(options_list, indent=2)}")
+
+        # Python tarafında "Dev" seçeneğini bul
+        dev_option_node_id = None
+        dev_option_name = "Dev"
+        for option in options_list:
+            if option and option.get("name", "").lower() == dev_option_name.lower():
+                dev_option_node_id = option.get("id")
+                break # Bulunca döngüden çık
+
         if not dev_option_node_id:
-             raise ValueError(f"'{dev_option_name}' seçeneği bulundu ancak Global Node ID ('id') alınamadı.")
-        print(f"DEBUG: Found '{dev_option_name}' option Global Node ID: {dev_option_node_id}")
+            # Seçenek bulunamadıysa hata ver
+            option_names = [o.get('name', 'İsimsiz') for o in options_list if o]
+            raise ValueError(f"'{dev_option_name}' isimli seçenek Status alanı seçenekleri arasında bulunamadı! Bulunanlar: {option_names}")
 
-    except (KeyError, IndexError, TypeError) as e:
-        raise ValueError(f"'{dev_option_name}' seçeneğinin Node ID'si alınırken yapı hatası: {e}. Yanıt: {option_resp}") from e
+        print(f"DEBUG: Found '{dev_option_name}' option ID from list: {dev_option_node_id}")
+
+    except (KeyError, TypeError) as e:
+        raise ValueError(f"Seçenekler işlenirken yapı hatası: {e}. Yanıt: {options_resp}") from e
 
     # Sonuçları döndür
     print("🗂️  Status field ID:", status_field_id[:8], "…  Dev option ID:", dev_option_node_id[:8], "…")
@@ -157,7 +162,7 @@ try:
 except ValueError as e:
     print(f"❌ Kritik Hata: Proje/Alan/Seçenek ID'leri alınamadı. {e}")
     exit(1)
-except Exception as e: # Beklenmedik diğer hatalar için
+except Exception as e:
     print(f"❌ Beklenmedik Hata (fetch_project_ids): {type(e).__name__} - {e}")
     import traceback
     traceback.print_exc()
@@ -165,7 +170,6 @@ except Exception as e: # Beklenmedik diğer hatalar için
 
 
 # ---------- Kartı taşı ----------
-# Bu fonksiyon aynı kalabilir, artık doğru DEV_OPTION_ID ile çağrılacak
 def move_issue_to_dev(item_id: str):
     """Verilen issue'nun proje kartını 'Dev' statüsüne taşır."""
     mut = """
@@ -190,7 +194,6 @@ def move_issue_to_dev(item_id: str):
 
 
 # ---------- Ana iş akışı ----------
-# main fonksiyonu ve sonrası aynı kalabilir...
 def main():
     """Ana otomasyon adımlarını çalıştırır."""
     # 1) Branch oluştur veya var olanı kullan
