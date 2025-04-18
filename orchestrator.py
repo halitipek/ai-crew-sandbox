@@ -24,11 +24,22 @@ HEAD   = {"Authorization": f"Bearer {TOKEN}"}
 gh = Github(TOKEN)
 repo = gh.get_repo(REPO_FULL)
 
-def gql(query: str, variables: dict = None):
-    r = requests.post(GH_API, json={"query": query, "variables": variables or {}},
-                      headers=HEAD, timeout=30)
-    r.raise_for_status()
-    return r.json()
+def gql(query: str, variables: dict | None = None):
+    resp = requests.post(
+        GH_API,
+        headers=HEAD,
+        json={"query": query, "variables": variables or {}},
+        timeout=30
+    )
+
+    # 🔍 DEBUG satırları
+    print("▶️  gql HTTP:", resp.status_code)
+    print("▶️  gql body:", resp.text[:500].replace("\n", " ")[:500])
+
+    resp.raise_for_status()
+    return resp.json()
+
+
 
 # --------------------  PROJECT ID LOOKUP  -----------------
 def fetch_project_ids():
