@@ -9,86 +9,86 @@ SimplyECS – AI Orchestrator bootstrap
 import os, requests, textwrap
 from github import Github
 
-# ---------- ayarlar ----------
-REPO_FULL     = "halitipek/ai-crew-sandbox"
-ISSUE_NUMBER  = 1
-BRANCH        = "feature/mvp1_world_skeleton"
-SLACK_TEXT    = ":rocket: PR *#{pr}* opened for MVP‑1 → {url}"
+# ---------- Ayarlar ----------
+REPO_FULL    = "halitipek/ai-crew-sandbox"
+ISSUE_NUMBER = 1
+BRANCH       = "feature/mvp1_world_skeleton"
+SLACK_TEXT   = ":rocket: PR *#{pr}* opened for MVP‑1 → {url}"
 
-TOKEN  = os.environ["GH_PAT"]
-SLACK  = os.environ["SLACK_WEBHOOK"]
-GH_API = "https://api.github.com/graphql"
-HEAD   = {"Authorization": f"Bearer {TOKEN}"}
+TOKEN   = os.environ["GH_PAT"]
+SLACK   = os.environ["SLACK_WEBHOOK"]
+GH_API  = "https://api.github.com/graphql"
+HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 gh   = Github(TOKEN)
 repo = gh.get_repo(REPO_FULL)
 
-# ---------- GraphQL yardımcıları ----------
+# ---------- GraphQL yardımcı fonksiyon ----------
 def gql(query: str, variables: dict | None = None):
-    r = requests.post(GH_API, headers=HEAD,
-                      json={"query": query, "variables": variables or {}},
-                      timeout=30)
-    r.raise_for_status()
-    return r.json()
+    resp = requests.post(GH_API, headers=HEADERS,
+                         json={"query": query, "variables": variables or {}},
+                         timeout=30)
+    resp.raise_for_status()
+    return resp.json()
 
-# ---------- Proje / Alan / Dev kimlikleri ----------
+# ---------- Proje ve alan kimliklerini al ----------
 def fetch_project_ids():
     owner, name = REPO_FULL.split("/")
 
-    q_projects = """
-      query($o:String!,$n:String!){
-        viewer      { projectsV2(first:20){nodes{id title}} }
-        repository(owner:$o,name:$n){ projectsV2(first:20){nodes{id title}} }
-      }"""
-    data = gql(q_projects, {"o": owner, "n": name})["data"]
-    nodes = data["viewer"]["projectsV2"]["nodes"] + \
-            data["repository"]["projectsV2"]["nodes"]
-
+    # 1) Proje ID’si
+    q_proj = """
+    query($o:String!,$n:String!){
+      viewer { projectsV2(first:20){nodes{id title}} }
+      repository(owner:$o,name:$n){
+        projectsV2(first:20){nodes{id title}}
+      }
+    }"""
+    data = gql(q_proj, {"o": owner, "n": name})["data"]
+    nodes = data["viewer"]["projectsV2"]["nodes"] + data["repository"]["projectsV2"]["nodes"]
     proj = next((n for n in nodes if "SimplyECS" in n["title"]), nodes[0])
     project_id = proj["id"]
     print("🔍  Using project:", proj["title"])
 
-    q_fields = """
-      query($p:ID!){ node(id:$p){
-        ... on ProjectV2{ fields(first:20){
-          nodes{ __typename ... on ProjectV2SingleSelectField{
-            id name options{id name} } }}}}
-    """
-    # önceki q_fields tanımı aynı kalsın
-    resp = gql(q_fields, {"p": project_id})
-    print("▶️ fields response:", resp)      # tüm JSON’u bas
+    # 2) Status alanı + Dev opsiyonu
+    q_field = """
+    query($p:ID!){
+      node(id:$p){
+        ... on ProjectV2 {
+          field(name:"Status"){
+            ... on ProjectV2SingleSelectField {
+              id name
+              options { id name }
+            }
+          }
+        }
+      }
+    }"""
+    resp = gql(q_field, {"p": project_id})
     if "errors" in resp:
-        # eğer hata varsa çıkalım
-        print("❌ fields query ERROR:", resp["errors"])
+        print("❌ field query ERROR:", resp["errors"])
         raise SystemExit(1)
+    sf = resp["data"]["node"]["field"]
+    field_id = sf["id"]
+    dev_opt = next(o for o in sf["options"] if o["name"].lower()=="dev")["id"]
 
-    fields = resp["data"]["node"]["fields"]["nodes"]
-    status = next(f for f in fields if f["__typename"] == "ProjectV2SingleSelectField"
-                                    and f["name"].lower().startswith("status"))
-    field_id = status["id"]
-
-    dev_opt = next(o for o in status["options"]
-                   if o["name"].lower() == "dev")["id"]
-
-    # Kısa id'yi (<= 16 hex) global Node ID'ye yükselt
+    # Kısa ID ise global Node ID’ye yükselt
     if len(dev_opt) < 30:
-        dev_opt = gql(
-          'query($id:ID!){ node(id:$id){ id } }',
-          {"id": dev_opt}
-        )["data"]["node"]["id"]
+        conv = gql('query($id:ID!){ node(id:$id){ id }}', {"id": dev_opt})
+        dev_opt = conv["data"]["node"]["id"]
 
-    print("🗂️  Status field:", field_id[:10], "… — Dev option:", dev_opt[:10], "…")
+    print("🗂️  Status field ID:", field_id[:8], "…  Dev option ID:", dev_opt[:8], "…")
     return project_id, field_id, dev_opt
 
 PROJECT_ID, STATUS_FIELD_ID, DEV_OPTION_ID = fetch_project_ids()
 
+# ---------- Kartı taşı ----------
 def move_issue_to_dev(item_id: str):
     mut = """
-      mutation($proj:ID!,$item:ID!,$field:ID!,$opt:ID!){
-        updateProjectV2ItemFieldValue(input:{
-          projectId:$proj itemId:$item fieldId:$field
-          value:{ singleSelectOptionId:$opt }})
-        { item { id } }}
+    mutation($proj:ID!,$item:ID!,$field:ID!,$opt:ID!){
+      updateProjectV2ItemFieldValue(input:{
+        projectId:$proj itemId:$item fieldId:$field
+        value:{ singleSelectOptionId:$opt }})
+      { item { id } }}
     """
     gql(mut, {"proj": PROJECT_ID, "item": item_id,
               "field": STATUS_FIELD_ID, "opt": DEV_OPTION_ID})
@@ -96,7 +96,7 @@ def move_issue_to_dev(item_id: str):
 
 # ---------- Ana iş akışı ----------
 def main():
-    # Dal oluştur / varsa geç
+    # 1) Branch oluştur
     main_sha = repo.get_branch("main").commit.sha
     try:
         repo.create_git_ref(ref=f"refs/heads/{BRANCH}", sha=main_sha)
@@ -104,17 +104,16 @@ def main():
     except Exception:
         print("ℹ️  Branch exists; continue")
 
-    # Boş World dosyaları ekle
-    for path in ("src/ecs/World.hpp", "src/ecs/World.cpp"):
+    # 2) Boş dosyaları ekle
+    for path in ("src/ecs/World.hpp","src/ecs/World.cpp"):
         try:
             repo.get_contents(path, ref=BRANCH)
         except Exception:
             repo.create_file(path, f"feat: add {path}", "", branch=BRANCH)
             print("➕  Added", path)
 
-    # PR aç / varsa kullan
-    pulls = repo.get_pulls(state="open",
-                           head=f"{repo.owner.login}:{BRANCH}")
+    # 3) PR aç / varsa yeniden kullan
+    pulls = repo.get_pulls(state="open", head=f"{repo.owner.login}:{BRANCH}")
     if pulls.totalCount:
         pr = pulls[0]
         print("🔗  PR already exists:", pr.html_url)
@@ -126,16 +125,14 @@ def main():
         )
         print("🔗  PR opened:", pr.html_url)
 
-    # Issue kartını Dev'e taşı
+    # 4) Issue’u Dev’e taşı
     issue   = repo.get_issue(ISSUE_NUMBER)
     item_id = getattr(issue, "node_id", issue.raw_data["node_id"])
     move_issue_to_dev(item_id)
     issue.create_comment(f"PR #{pr.number} linked")
 
-    # Slack ping
-    requests.post(SLACK, json={
-        "text": SLACK_TEXT.format(pr=pr.number, url=pr.html_url)
-    })
+    # 5) Slack ping
+    requests.post(SLACK, json={"text": SLACK_TEXT.format(pr=pr.number, url=pr.html_url)})
 
 if __name__ == "__main__":
     main()
