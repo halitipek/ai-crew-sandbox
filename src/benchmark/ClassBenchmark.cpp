@@ -1,160 +1,140 @@
 ```cpp
 // File: src/benchmark/ClassBenchmark.cpp
-#include <iostream>
+// Benchmark tests for ecs::World default constructor and destructor.
+//
+// This benchmark primarily measures the cost of creating and destroying
+// World objects, especially focusing on large scale scenarios for future baseline.
+//
+// Since ecs::World currently has only default ctor/dtor with no entity/component logic,
+// the benchmark tests focus on instance lifecycle and memory overhead.
+//
+// Target performance:
+// - Creating/destroying a World with simulated large entity counts (conceptual, as no entities yet)
+// - Baseline for future comparison when entities/components are implemented.
+//
+// Format:
+// - Run measurements for 1K, 10K, 100K, 1M "entities" (simulated as repeated ctor/dtor or allocated objects)
+// - Report times in milliseconds
+// - Check if 1M entity scenario <= 20 ms (current code trivial, should pass easily)
+//
+// Dependencies:
+// - C++11 chrono
+// - iostream
+//
+
 #include <chrono>
+#include <iostream>
 #include <vector>
 #include <string>
-#include <iomanip>  // setw, setprecision
+#include <iomanip>
 
 #include "ecs/World.h"
 
 using namespace ecs;
 using Clock = std::chrono::high_resolution_clock;
-using namespace std::chrono_literals;
 
-/**
- * @brief Utility RAII timer for benchmarking scopes.
- */
-class ScopedTimer {
-public:
-    ScopedTimer(std::string_view message)
-        : m_message(message), m_start(Clock::now()) {}
-
-    ~ScopedTimer() {
-        auto end = Clock::now();
-        auto durationMs = std::chrono::duration_cast<std::chrono::microseconds>(end - m_start).count() / 1000.0;
-        std::cout << m_message << ": " << std::fixed << std::setprecision(3) << durationMs << " ms\n";
-        m_lastDurationMs = durationMs;
-    }
-
-    double durationMs() const { return m_lastDurationMs; }
-
-private:
-    std::string m_message;
-    Clock::time_point m_start;
-    double m_lastDurationMs = 0.0;
+struct BenchmarkResult {
+    std::string testName;
+    size_t entityCount;    // number of simulated entities
+    double durationMs;     // elapsed time in milliseconds
+    bool passed;
 };
 
-/**
- * @brief Run microbenchmark: create/destroy single World instance multiple times.
- * Microbenchmark focuses on World ctor/dtor overhead.
- *
- * @param iterations How many times the World instance is created/destroyed.
- * @return double average duration (ms)
- */
-double microBenchmark_WorldCtorDtor(std::size_t iterations) {
+void runBenchmarkCtorDtor(size_t entityCount, BenchmarkResult& result) {
+    // This benchmark simulates the cost of creating and destroying World objects.
+    // Since World currently does NOT manage entities internally, we simulate "entityCount"
+    // by creating/destroying the World instance repeatedly "entityCount" times.
+    //
+    // This is admittedly artificial but provides a baseline.
+    //
+    // In the future, when World manages entities, this test will 
+    // directly create 1K..1M entities and measure.
+    //
     auto start = Clock::now();
-    for (std::size_t i = 0; i < iterations; ++i) {
+
+    for(size_t i = 0; i < entityCount; ++i) {
         World w;
-        (void)w; // suppress unused warning
+        // minimal scope to call ctor then dtor on destruction
     }
+
     auto end = Clock::now();
-    double durationMs = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-    return durationMs / iterations;
-}
+    double elapsedMs = std::chrono::duration<double, std::milli>(end - start).count();
 
-/**
- * @brief Macro benchmark scenario:
- * Create a large vector (size N) of Worlds on heap and destroy them,
- * measuring creation time and destruction time separately.
- *
- * Since current World has no meaningful data/methods,
- * this simulates overhead of default ctor and dtor for many instances.
- *
- * @param entityCounts vector of entity counts to simulate load.
- */
-void macroBenchmark_World_CreateDestroy(const std::vector<std::size_t>& entityCounts) {
-    std::cout << "\n--- Macro Benchmark: World create/destroy for multiple sizes ---\n";
+    result.testName = "World ctor/dtor x N";
+    result.entityCount = entityCount;
+    result.durationMs = elapsedMs;
 
-    for (auto N : entityCounts) {
-        std::cout << "Testing with " << N << " World instances.\n";
-
-        double creationTimeMs = 0.0;
-        double destructionTimeMs = 0.0;
-
-        // Measure creation time
-        {
-            auto start = Clock::now();
-            std::vector<World*> worlds;
-            worlds.reserve(N);
-            for (std::size_t i = 0; i < N; ++i)
-                worlds.push_back(new World());
-            auto end = Clock::now();
-            creationTimeMs = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-
-            // Measure destruction time
-            start = Clock::now();
-            for (auto ptr : worlds) delete ptr;
-            end = Clock::now();
-            destructionTimeMs = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count() / 1000.0;
-        }
-
-        double totalMs = creationTimeMs + destructionTimeMs;
-
-        // Expected: For 1M instances <= 20ms total.
-        bool pass = (N == 1000000) ? (totalMs <= 20.0) : true;
-
-        std::cout << std::fixed << std::setprecision(3)
-                  << "Create time: " << creationTimeMs << " ms, "
-                  << "Destroy time: " << destructionTimeMs << " ms, "
-                  << "Total: " << totalMs << " ms - "
-                  << (pass ? "PASS" : "FAIL") << "\n\n";
+    // Target: For 1M "entities" simulated, <= 20ms
+    if(entityCount == 1000000) {
+        result.passed = (elapsedMs <= 20.0);
+    } else {
+        // For smaller runs no target, assume pass
+        result.passed = true;
     }
 }
 
-/**
- * @brief Run benchmark suite.
- * Prints results to console with pass/fail according to performance goals.
- */
-void runBenchmarks() {
-    std::cout << "SimplyECS World class benchmark suite\n";
-    std::cout << "-------------------------------------\n";
-
-    // Microbenchmark: ctor/dtor call overhead average measurement
-    constexpr std::size_t microIterations = 1000000;
-    {
-        std::cout << "\nMicrobenchmark: Average World ctor+dtor time (" << microIterations << " iterations)\n";
-        double avgTimeMs = microBenchmark_WorldCtorDtor(microIterations);
-        std::cout << "Average ctor+dtor: " << std::fixed << std::setprecision(6) << avgTimeMs << " ms\n";
-        // No strict pass/fail here, just measurement.
-    }
-
-    // Macrobenchmarks - simulating entity counts by creating multiple World instances.
-    // NOTE:
-    // Current World does NOT truly represent entities/components, but use this to measure ctor/dtor scaling.
-    std::vector<std::size_t> entityCounts = { 1000, 10000, 100000, 1000000 };
-    macroBenchmark_World_CreateDestroy(entityCounts);
-
-    std::cout << "Benchmark suite complete.\n\n";
+void printBenchmarkResult(const BenchmarkResult& res) {
+    std::cout << std::fixed << std::setprecision(3);
+    std::cout << "[Benchmark] " << res.testName << "\n"
+              << "  Entity Count: " << res.entityCount << "\n"
+              << "  Duration:     " << res.durationMs << " ms\n"
+              << "  Result:       " << (res.passed ? "PASS" : "FAIL") << "\n"
+              << std::endl;
 }
 
 int main() {
-    try {
-        runBenchmarks();
-        return 0;
-    } catch (const std::exception& ex) {
-        std::cerr << "Exception caught during benchmarks: " << ex.what() << '\n';
-        return 1;
-    } catch (...) {
-        std::cerr << "Unknown exception caught during benchmarks\n";
-        return 2;
+    std::cout << "SimplyECS World ctor/dtor benchmark\n";
+    std::cout << "-----------------------------------\n";
+    std::cout << "Target for 1M entities: <= 20 ms\n\n";
+
+    const size_t testEntityCounts[] = {1000, 10000, 100000, 1000000};
+    std::vector<BenchmarkResult> results;
+
+    for(size_t count : testEntityCounts) {
+        BenchmarkResult res;
+        runBenchmarkCtorDtor(count, res);
+        printBenchmarkResult(res);
+        results.push_back(res);
+    }
+
+    // Summary report
+    size_t passCount = 0;
+    for(const auto& r : results) {
+        if(r.passed) ++passCount;
+    }
+
+    std::cout << "Summary: Passed " << passCount << " / "
+              << results.size() << " benchmarks.\n";
+
+    if(passCount == results.size()) {
+        std::cout << "Overall Result: SUCCESS\n";
+        return 0; // success
+    } else {
+        std::cout << "Overall Result: FAILURE\n";
+        return 1; // failure
     }
 }
 ```
 
 ---
 
-# Açıklamalar ve Detaylar
+### Açıklama ve öneriler:
 
-- **Mikro benchmark:** Tek tek `World` nesnesinin oluşturulma ve yok edilme süresi, 1M kez tekrar edilerek ortalaması alınır.
-- **Makro benchmark:** Farklı büyüklüklerde (1K, 10K, 100K, 1M) `World` örnekleri heap'te yaratılır ve yok edilir. Bu sayede `ctor` ve `dtor` üzerindeki toplam yük ölçülür.
-- **Performans hedefleri:** 1M entity için toplam ctor+dtor zamanı <= 20 ms olmalıdır (şimdilik `World` nesnesi, gerçek entity yönetimini temsil etmediği için referans olarak aynı limit kullanılır).
-- **Sonuçlar:** Konsola net, okunabilir şekilde yazdırılır; testin geçtiği veya kaldığı durumda bilgi verilir.
-- **Hazırlık:** Kütüphanenin gelecekte eklenecek fonksiyonları dolayısıyla benchmark altyapısı genişletilebilir olacak.
-- **Bellek yönetimi:** `new` ve `delete` kullanılarak testi gerçekçi hale getirdim; benchmark bitince tüm kaynaklar temizlenmiş olur (örnek).  
+- Şu anki ecs::World sadece ctor/dtor barındırdığı için gerçek entity oluşturma benchmarkları yapılamıyor.
+- Performans ölçümü amacıyla World objesini N defa oluşturup yok ederek (simüle edilerek) test yapıldı.
+- Gerçek kullanımda entity sayısına göre (örn. 1M entity) create/destroy fonksiyonları benchmark edilince gerçek test yapılacaktır.
+- Test sonuçlarını ms cinsinden çıktı olarak veriyor, performans hedefi 1M entity için 20ms olarak konuldu.
+- Küçük entity sayıları (1K,10K,100K) için anlamlı geçme ölçütü koymadım çünkü trivial.
+
+İleride `ecs::World` sınıfına entity ve component fonksiyonları eklendiğinde, mutlaka bu benchmark dosyasında:
+
+- entity create/destroy hızları,
+- component ekleme/erişim hızları,
+- memory usage ölçümleri,
+- concurrency benchmarkları
+
+gibi kapsamlı ve gerçekçi performans testleri yapılmalıdır.
 
 ---
 
-# Not
-
-Şu an `ecs::World` sınıfı minimal olduğu için entity ve component bazlı gerçek benchmarklar mümkün değil. En uygun şimdilik ctor-dtor ölçek testi sağlanabilir. İlerleyen versiyonlarda `createEntity()`, `addComponent<T>()` vb. özellikler eklendiğinde ilgili benchmarklar genişletilmelidir.
+İyi çalışmalar!
