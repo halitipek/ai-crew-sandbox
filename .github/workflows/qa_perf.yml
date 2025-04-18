@@ -1,0 +1,42 @@
+name: QA/Perf Testing & Benchmarking
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  create-tests-benchmarks:
+    # Core Engineers'ın yorum eklediği PR'lar için çalış
+    if: contains(github.event.comment.body, 'Core Engineers Raporu') && contains(github.event.comment.body, 'Kodlar hazır')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get PR Number
+        id: get-pr-number
+        run: |
+          PR_NUMBER=$(echo "${{ github.event.issue.html_url }}" | awk -F/ '{print $NF}')
+          echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          echo "PR Number: $PR_NUMBER"
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install openai pyyaml
+      
+      - name: Run QA/Perf
+        run: python qa_perf.py
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
