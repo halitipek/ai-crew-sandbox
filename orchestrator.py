@@ -54,7 +54,15 @@ def fetch_project_ids():
           nodes{ __typename ... on ProjectV2SingleSelectField{
             id name options{id name} } }}}}
     """
-    fields = gql(q_fields, {"p": project_id})["data"]["node"]["fields"]["nodes"]
+    # önceki q_fields tanımı aynı kalsın
+    resp = gql(q_fields, {"p": project_id})
+    print("▶️ fields response:", resp)      # tüm JSON’u bas
+    if "errors" in resp:
+        # eğer hata varsa çıkalım
+        print("❌ fields query ERROR:", resp["errors"])
+        raise SystemExit(1)
+
+    fields = resp["data"]["node"]["fields"]["nodes"]
     status = next(f for f in fields if f["__typename"] == "ProjectV2SingleSelectField"
                                     and f["name"].lower().startswith("status"))
     field_id = status["id"]
