@@ -2,11 +2,11 @@
 """
 SimplyECS – AI Orchestrator bootstrap
 •  PR açar (varsa kullanır) ▸ #MVP‑1
-•  Issue kartını Todo ▸ Dev taşır (Projects V2)
+•  Issue kartını Todo ▸ Dev taşır (Projects V2)
 •  Slack ping gönderir
 """
 
-import os, requests, textwrap, json
+import os, requests, textwrap, json, base64
 from github import Github, GithubException
 
 # ---------- Ayarlar ----------
@@ -63,7 +63,7 @@ def fetch_project_ids():
     """Proje ID'sini, Status alanı ID'sini ve 'Dev' seçeneği Global Node ID'sini alır."""
     owner, name = REPO_FULL.split("/")
 
-    # 1) Proje ID’si
+    # 1) Proje ID'si
     q_proj = """
     query($o:String!,$n:String!){
       viewer { projectsV2(first:20){nodes{id title}} }
@@ -92,6 +92,10 @@ def fetch_project_ids():
             ... on ProjectV2SingleSelectField {
               id # Alanın kendi Global ID'si
               name
+              options {
+                id
+                name
+              }
             }
           }
         }
@@ -105,55 +109,66 @@ def fetch_project_ids():
         status_field_id = sf_data.get("id")
         if not status_field_id: raise ValueError("Status alanı için 'id' değeri bulunamadı.")
         print(f"DEBUG: Found Status Field Global ID: {status_field_id}")
+        
+        # Doğrudan status field ile gelen seçenekleri kullanmayı deneyelim
+        status_options = sf_data.get("options", [])
+        print(f"DEBUG: Options received directly with field: {json.dumps(status_options, indent=2)}")
+        
+        # "Dev" seçeneğini bul
+        dev_option = next((opt for opt in status_options if opt["name"].lower() == "dev"), None)
+        if not dev_option: raise ValueError("'Dev' seçeneği bulunamadı. Mevcut seçenekler: " + 
+                                         ", ".join(opt["name"] for opt in status_options))
+        
+        dev_option_id = dev_option["id"]
+        
     except KeyError as e:
         raise ValueError(f"Status field ID'si alınırken yapı hatası: {e}") from e
-
-    # 3) Alan ID'sini kullanarak seçenekleri (ve umarız Global ID'lerini) al
-    q_options_list = """
-    query($field_id: ID!) {
-      node(id: $field_id) {
-        ... on ProjectV2SingleSelectField {
-          # Tekrar tüm seçenekleri isteyelim
-          options {
-            id # <<<--- Bu ID'nin Global Node ID (PVTO_...) olmasını umuyoruz!
-            name
-          }
-        }
-      }
-    }
-    """
-    options_resp = gql(q_options_list, {"field_id": status_field_id})
-    if not options_resp: raise ValueError("Status alanı seçenekleri sorgusu başarısız.")
-
+    
+    # Global Node ID oluşturma 
+    # GitHub v4 API için doğru format oluşturmayı deneyelim
     try:
-        # Yanıttan seçenekler listesini al
-        options_list = options_resp.get("data", {}).get("node", {}).get("options", [])
-        if not options_list:
-             raise ValueError(f"Status alanı ({status_field_id}) için seçenek listesi alınamadı veya boş.")
-
-        print(f"DEBUG: Options received from second query: {json.dumps(options_list, indent=2)}")
-
-        # Python tarafında "Dev" seçeneğini bul
-        dev_option_node_id = None
-        dev_option_name = "Dev"
-        for option in options_list:
-            if option and option.get("name", "").lower() == dev_option_name.lower():
-                dev_option_node_id = option.get("id")
-                break # Bulunca döngüden çık
-
-        if not dev_option_node_id:
-            # Seçenek bulunamadıysa hata ver
-            option_names = [o.get('name', 'İsimsiz') for o in options_list if o]
-            raise ValueError(f"'{dev_option_name}' isimli seçenek Status alanı seçenekleri arasında bulunamadı! Bulunanlar: {option_names}")
-
-        print(f"DEBUG: Found '{dev_option_name}' option ID from list: {dev_option_node_id}")
-
-    except (KeyError, TypeError) as e:
-        raise ValueError(f"Seçenekler işlenirken yapı hatası: {e}. Yanıt: {options_resp}") from e
+        # GitHub'ın beklediği ID formatını oluşturalım
+        # Yöntem 1: Direkt Global ID formatı denemesi (PVTO_ prefix)
+        # Eğer doğrudan API'den gelen ID bir Global Node ID değilse
+        if not dev_option_id.startswith("PVTO_"):
+            # Yöntem 2: GraphQL için doğru seçenek ID'sini almak için bir sorgu daha yapalım
+            q_option_id = """
+            query($project_id:ID!,$option_name:String!){
+              node(id:$project_id){
+                ... on ProjectV2 {
+                  field(name:"Status"){
+                    ... on ProjectV2SingleSelectField {
+                      options(names:[$option_name]) {
+                        id
+                        databaseId
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """
+            option_resp = gql(q_option_id, {"project_id": project_id, "option_name": "Dev"})
+            if option_resp:
+                option_data = option_resp.get("data", {})
+                node_data = option_data.get("node", {})
+                field_data = node_data.get("field", {})
+                options_data = field_data.get("options", [])
+                
+                if options_data and len(options_data) > 0:
+                    dev_option_node_id = options_data[0].get("id")
+                    if dev_option_node_id:
+                        print(f"DEBUG: Found Dev option Global Node ID through secondary query: {dev_option_node_id}")
+                        dev_option_id = dev_option_node_id
+    
+        print(f"DEBUG: Final Dev option ID to be used: {dev_option_id}")
+    except Exception as e:
+        print(f"WARNING: Error while trying to get correct Dev option ID format: {e}")
+        # Hata olsa bile devam edelim, belki ana ID formatı çalışır
 
     # Sonuçları döndür
-    print("🗂️  Status field ID:", status_field_id[:8], "…  Dev option ID:", dev_option_node_id[:8], "…")
-    return project_id, status_field_id, dev_option_node_id
+    print(f"🗂️  Status field ID: {status_field_id[:8]} …  Dev option ID: {dev_option_id[:8]} …")
+    return project_id, status_field_id, dev_option_id
 
 
 # --- Fonksiyon çağrısı ve sonrası ---
@@ -172,15 +187,60 @@ except Exception as e:
 # ---------- Kartı taşı ----------
 def move_issue_to_dev(item_id: str):
     """Verilen issue'nun proje kartını 'Dev' statüsüne taşır."""
+    
+    # Yeni yaklaşım: addProjectV2ItemById ile kartı projeye ekle (eğer yoksa)
+    add_item_mut = """
+    mutation($project_id:ID!,$content_id:ID!){
+      addProjectV2ItemById(input:{
+        projectId:$project_id
+        contentId:$content_id
+      }) {
+        item {
+          id
+        }
+      }
+    }
+    """
+    
+    # Önce item ID'sini almak için bir sorgu yapalım
+    item_id_query = """
+    query($issue_number:Int!, $owner:String!, $repo:String!) {
+      repository(owner:$owner, name:$repo) {
+        issue(number:$issue_number) {
+          id
+        }
+      }
+    }
+    """
+    
+    owner, repo_name = REPO_FULL.split("/")
+    issue_id_resp = gql(item_id_query, {"issue_number": ISSUE_NUMBER, "owner": owner, "repo": repo_name})
+    if issue_id_resp:
+        content_id = issue_id_resp.get("data", {}).get("repository", {}).get("issue", {}).get("id")
+        if content_id:
+            print(f"DEBUG: Found issue content ID: {content_id}")
+            
+            # Önce projeye ekleyelim (zaten ekli ise sorun değil)
+            add_resp = gql(add_item_mut, {"project_id": PROJECT_ID, "content_id": content_id})
+            if add_resp:
+                print("DEBUG: Issue added to project or already exists")
+    
+    # Kartı Dev'e taşı
     mut = """
     mutation($proj:ID!,$item:ID!,$field:ID!,$opt:ID!){
       updateProjectV2ItemFieldValue(input:{
-        projectId:$proj itemId:$item fieldId:$field
-        value:{ singleSelectOptionId:$opt }})
+        projectId:$proj 
+        itemId:$item 
+        fieldId:$field
+        value:{ singleSelectOptionId:$opt }
+      })
       {
-        projectV2Item { id }
+        projectV2Item { 
+          id 
+        }
       }
     }"""
+    
     print(f"DEBUG: Attempting to move item '{item_id}' using field '{STATUS_FIELD_ID}' and option '{DEV_OPTION_ID}'")
     move_resp = gql(mut, {"proj": PROJECT_ID, "item": item_id,
                           "field": STATUS_FIELD_ID, "opt": DEV_OPTION_ID})
@@ -190,7 +250,34 @@ def move_issue_to_dev(item_id: str):
         print(f"✅  Moved card to Dev (Item ID: {moved_item_id[:8]}...)")
     else:
         print(f"⚠️ Warning: Card move failed or API response was unexpected. Response from gql: {move_resp}")
-        # raise RuntimeError("Kart taşıma işlemi başarısız oldu.") # İsteğe bağlı
+        
+        # Alternatif olarak doğrudan databaseId ile deneme yapalım
+        try:
+            alt_mut = """
+            mutation($proj:ID!,$item:ID!,$field:ID!,$opt:String!){
+              updateProjectV2ItemFieldValue(input:{
+                projectId:$proj 
+                itemId:$item 
+                fieldId:$field
+                value:{ singleSelectOptionId:$opt }
+              })
+              {
+                projectV2Item { 
+                  id 
+                }
+              }
+            }"""
+            
+            alt_resp = gql(alt_mut, {"proj": PROJECT_ID, "item": item_id,
+                             "field": STATUS_FIELD_ID, "opt": DEV_OPTION_ID})
+                             
+            if alt_resp and alt_resp.get("data", {}).get("updateProjectV2ItemFieldValue", {}).get("projectV2Item"):
+                moved_item_id = alt_resp['data']['updateProjectV2ItemFieldValue']['projectV2Item'].get('id', 'Bilinmiyor')
+                print(f"✅  Moved card to Dev using alternative method (Item ID: {moved_item_id[:8]}...)")
+            else:
+                print(f"⚠️ Alternative card move also failed. Response: {alt_resp}")
+        except Exception as e:
+            print(f"❌ Error in alternative card move attempt: {e}")
 
 
 # ---------- Ana iş akışı ----------
@@ -258,7 +345,7 @@ def main():
         print("⚠️ Skipping issue update and Slack notification because PR is not available.")
         return
 
-    # 4) Issue’u Dev’e taşı ve yorum ekle
+    # 4) Issue'u Dev'e taşı ve yorum ekle
     try:
         print(f"ℹ️ Updating issue #{ISSUE_NUMBER}")
         issue = repo.get_issue(ISSUE_NUMBER)
