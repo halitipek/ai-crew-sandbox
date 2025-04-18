@@ -171,7 +171,7 @@ def generate_tests(prompt):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=3000
+            max_completion_tokens=3000
         )
         
         return response.choices[0].message.content
@@ -205,7 +205,7 @@ def generate_benchmark(prompt):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=3000
+            max_completion_tokens=3000
         )
         
         return response.choices[0].message.content
@@ -240,7 +240,7 @@ def analyze_code(file_contents):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=2000
+            max_completion_tokens=2000
         )
         
         return response.choices[0].message.content

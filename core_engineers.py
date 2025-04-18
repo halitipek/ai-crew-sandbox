@@ -150,7 +150,7 @@ def generate_code(prompt, model=CORE_ENG_1_MODEL):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=4000
+            max_completion_tokens=4000
         )
         
         return response.choices[0].message.content
@@ -182,7 +182,7 @@ def analyze_issue(issue_content):
                 {"role": "user", "content": prompt}
             ],
             temperature=0.1,
-            max_tokens=1000
+            max_completion_tokens=1000
         )
         
         return response.choices[0].message.content

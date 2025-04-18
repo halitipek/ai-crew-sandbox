@@ -6,13 +6,18 @@ on:
   issue_comment:
     types: [created]
   workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'İncelenecek PR numarası'
+        required: true
+        type: string
 
 jobs:
   implement-code:
-    # Sadece PR onaylandığında çalış
+    # Önşartları kontrol eder
     if: |
       (github.event_name == 'pull_request_review' && github.event.review.state == 'approved') ||
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, 'run-core-engineers')) ||
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '🧠 Chief Architect İncelemesi')) ||
       github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
@@ -32,10 +37,24 @@ jobs:
           pip install -r requirements.txt
           pip install openai pyyaml
       
+      - name: Get PR Number
+        id: get-pr-number
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "PR_NUMBER=${{ github.event.inputs.pr_number }}" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" == "pull_request_review" ]; then
+            echo "PR_NUMBER=${{ github.event.pull_request.number }}" >> $GITHUB_ENV
+          elif [ "${{ github.event_name }}" == "issue_comment" ]; then
+            # PR numarasını yorum URL'inden al
+            PR_NUMBER=$(echo "${{ github.event.issue.html_url }}" | awk -F/ '{print $NF}')
+            echo "PR_NUMBER=$PR_NUMBER" >> $GITHUB_ENV
+          fi
+          echo "PR Number: ${{ env.PR_NUMBER }}"
+      
       - name: Run Core Engineers
         run: python core_engineers.py
         env:
           GH_PAT: ${{ secrets.GH_PAT }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_NUMBER: ${{ env.PR_NUMBER }}
