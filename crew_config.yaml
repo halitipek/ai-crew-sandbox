@@ -1,0 +1,15 @@
+crew:
+  orchestrator:
+    model: o3
+  chief_architect:
+    model: o3
+  core_eng_1:
+    model: o3
+  core_eng_2:
+    model: o3
+  qa_perf:
+    model: gpt-4.1-mini
+  devops:
+    model: o4-mini-high
+  cost_analyst:
+    model: gpt-3.5-turbo
