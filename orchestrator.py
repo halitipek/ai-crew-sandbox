@@ -7,7 +7,7 @@ SimplyECS – AI Orchestrator bootstrap
 """
 
 import os, requests, textwrap, json # json import edildi
-from github import Github
+from github import Github, GithubException
 
 # ---------- Ayarlar ----------
 REPO_FULL    = "halitipek/ai-crew-sandbox"
