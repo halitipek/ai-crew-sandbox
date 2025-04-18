@@ -42,39 +42,64 @@ def gql(query: str, variables: dict | None = None):
 
 
 # --------------------  PROJECT ID LOOKUP  -----------------
-def fetch_project_ids():
-    q = textwrap.dedent("""
-      query($owner:String!,$name:String!){
-        viewer { projectsV2(first:20){nodes{id title}} }
-        repository(owner:$owner, name:$name){
-          projectsV2(first:20){nodes{id title}} }
-      }""")
-    data = gql(q, {"owner": REPO_FULL.split("/")[0],
-                   "name":  REPO_FULL.split("/")[1]})["data"]
-    nodes = data["viewer"]["projectsV2"]["nodes"] + \
-            data["repository"]["projectsV2"]["nodes"]
+def fetch_project_ids() -> tuple[str, str, str]:
+    """Return (project_id, status_field_id, dev_option_id)."""
 
-    # Tolerant match: any title containing "SimplyECS"
+    # -------- 1) Proje (tahta) kimliğini bul --------
+    q_proj = """
+      query($owner:String!, $name:String!){
+        viewer {
+          projectsV2(first:20) { nodes { id title } }
+        }
+        repository(owner:$owner, name:$name){
+          projectsV2(first:20) { nodes { id title } }
+        }
+      }"""
+
+    owner, name = REPO_FULL.split("/")
+    nodes = gql(q_proj, {"owner": owner, "name": name})["data"]["viewer"]["projectsV2"]["nodes"] + \
+            gql(q_proj, {"owner": owner, "name": name})["data"]["repository"]["projectsV2"]["nodes"]
+
+    # Başlığında 'SimplyECS' geçen ilk projeyi al, yoksa dizinin ilkini kullan
     proj = next((n for n in nodes if "SimplyECS" in n["title"]), nodes[0])
     project_id = proj["id"]
     print("🔍  Using project:", proj["title"])
 
-    # Status field ID
-    q2 = """
-      query($p:ID!){ node(id:$p){
-        ... on ProjectV2 { field(name:"Status"){ id } } } }
-    """
-    field_id = gql(q2, {"p": project_id})["data"]["node"]["field"]["id"]
+    # -------- 2) Status alanı + Dev opsiyonu --------
+    q_fields = """
+      query($p:ID!){
+        node(id:$p){
+          ... on ProjectV2 {
+            fields(first:20){
+              nodes{
+                __typename
+                ... on ProjectV2SingleSelectField {
+                  id name
+                  options { id name }
+                }
+              }
+            }
+          }
+        }
+      }"""
 
-    # 'Dev' option ID
-    q3 = """
-      query($f:ID!){ node(id:$f){
-        ... on ProjectV2SingleSelectField { options{id name} } } }
-    """
-    opts = gql(q3, {"f": field_id})["data"]["node"]["options"]
-    dev_opt = next(o for o in opts if o["name"].lower() == "dev")["id"]
+    fields = gql(q_fields, {"p": project_id})["data"]["node"]["fields"]["nodes"]
 
+    status_field = next(
+        f for f in fields
+        if f.get("__typename") == "ProjectV2SingleSelectField"
+        and f["name"].lower().startswith("status")
+    )
+    field_id = status_field["id"]
+
+    dev_opt = next(
+        o for o in status_field["options"]
+        if o["name"].lower() == "dev"
+    )["id"]
+
+    print("🗂️  Status field ID:", field_id[:8], "… — Dev option ID:", dev_opt[:8], "…")
     return project_id, field_id, dev_opt
+
 
 PROJECT_ID, STATUS_FIELD_ID, DEV_OPTION_ID = fetch_project_ids()
 
