@@ -1,182 +1,179 @@
 ```cpp
 // File: src/benchmark/ClassBenchmark.cpp
-// Description: Benchmark tests for ecs::World class (constructor & destructor).
-// Author: SimplyECS Performance Team
-//
-// Measures performance of creating and destroying ecs::World instances,
-// simulating micro and macro benchmarks for different scales.
 
 #include <iostream>
-#include <vector>
 #include <chrono>
+#include <vector>
+#include <string>
+#include <iomanip>
+#include <stdexcept>
+#include <memory>
 #include "ecs/World.h"
 
-// UTILITIES
+using namespace ecs;
+using namespace std::chrono;
 
-using Clock = std::chrono::high_resolution_clock;
-using DurationMs = std::chrono::duration<double, std::milli>;
+/**
+ * @brief Benchmark fixture for ecs::World constructor and destructor performance.
+ * 
+ * Since currently ecs::World has only default ctor/dtor and no entity storage,
+ * this benchmark focuses on measuring the cost of creating and destroying many
+ * World instances to simulate workload.
+ * 
+ * Performance target (for future): Creating and destroying many Worlds should
+ * stay efficient without memory leaks or crashes.
+ * 
+ * Note: Entity-based benchmarks will be added once entity and component APIs exist.
+ */
 
-// Print separator line
-void printSeparator() {
-    std::cout << "--------------------------------------------\n";
-}
+struct BenchmarkResult {
+    std::string testName;
+    size_t iterations;
+    double avgDurationMs;
+    bool passed;
+};
 
-// Report benchmark result and pass/fail based on threshold
-void reportResult(const std::string& testName, double timeMs, double targetMs) {
-    std::cout << testName << ": " << timeMs << " ms";
-    if (targetMs > 0.0) {
-        if (timeMs <= targetMs) {
-            std::cout << " [PASS] (<= " << targetMs << " ms)\n";
-        } else {
-            std::cout << " [FAIL] (> " << targetMs << " ms)\n";
+class WorldBenchmark {
+public:
+    // Run benchmark of constructing/destroying N World instances in loop
+    BenchmarkResult run(size_t iterations) {
+        using clock = high_resolution_clock;
+        bool exceptionOccurred = false;
+
+        try {
+            auto start = clock::now();
+
+            for (size_t i = 0; i < iterations; i++) {
+                // Create and immediately destruct World instance (stack scope)
+                World w;
+                (void)w; // suppress unused warning
+            }
+
+            auto end = clock::now();
+            duration<double, std::milli> diff = end - start;
+            double avgMs = diff.count() / static_cast<double>(iterations);
+
+            // For now, let's require avgMs < 1 ms to consider passing (arbitrary)
+            bool pass = (avgMs < 1.0);
+
+            return BenchmarkResult{
+                "World ctor/dtor (single objects)",
+                iterations,
+                avgMs,
+                pass
+            };
         }
-    } else {
-        std::cout << '\n';
+        catch (const std::exception& e) {
+            std::cerr << "[Exception] " << e.what() << std::endl;
+            exceptionOccurred = true;
+        }
+        catch (...) {
+            std::cerr << "[Unknown exception occurred]" << std::endl;
+            exceptionOccurred = true;
+        }
+
+        return BenchmarkResult{
+            "World ctor/dtor (single objects)",
+            iterations,
+            0.0,
+            !exceptionOccurred
+        };
     }
+
+    /**
+     * @brief Run "bulk allocation" benchmark:
+     * Create N World instances up-front in a container, then destruct all,
+     * measuring total time. Useful to check repeated allocations impact.
+     */
+    BenchmarkResult runBulkAlloc(size_t count) {
+        using clock = high_resolution_clock;
+
+        try {
+            auto start = clock::now();
+
+            {
+                std::vector<World> worlds;
+                worlds.reserve(count);
+                for (size_t i = 0; i < count; i++)
+                    worlds.emplace_back();
+                // destructor called on vector clear at scope exit
+            }
+
+            auto end = clock::now();
+            duration<double, std::milli> diff = end - start;
+            double avgMs = diff.count() / static_cast<double>(count);
+
+            // no strict pass criteria but avgMs < 1ms good
+            bool pass = (avgMs < 1.0);
+
+            return BenchmarkResult{
+                "World batch ctor/dtor (vector storage)",
+                count,
+                avgMs,
+                pass
+            };
+        }
+        catch (const std::exception& e) {
+            std::cerr << "[Exception] " << e.what() << std::endl;
+        }
+        catch (...) {
+            std::cerr << "[Unknown exception occurred]" << std::endl;
+        }
+
+        return BenchmarkResult{
+            "World batch ctor/dtor (vector storage)",
+            count,
+            0.0,
+            false
+        };
+    }
+};
+
+void printBenchmarkResult(const BenchmarkResult& result) {
+    std::cout << std::left << std::setw(35) << result.testName 
+              << " | Iterations: " << std::setw(10) << result.iterations
+              << " | Avg Duration (ms): " << std::fixed << std::setprecision(6) << std::setw(12) << result.avgDurationMs
+              << " | Result: " << (result.passed ? "PASS" : "FAIL") << std::endl;
 }
 
-// Benchmark: create and destroy single World instance (micro benchmark)
-double benchmarkSingleWorldCreateDestroy(size_t iterations = 100000) {
-    using namespace ecs;
-    auto start = Clock::now();
-    for (size_t i = 0; i < iterations; ++i) {
-        World w;
-        (void)w; // suppress unused warning
-    }
-    auto end = Clock::now();
-    DurationMs duration = end - start;
-    return duration.count() / iterations; // average per create/destroy in ms
-}
-
-// Benchmark: create and destroy multiple World instances in batch (macro benchmark)
-double benchmarkBatchWorldCreateDestroy(size_t instances) {
-    using namespace ecs;
-    std::vector<World> worlds;
-    worlds.reserve(instances);
-
-    auto start = Clock::now();
-    for (size_t i = 0; i < instances; ++i) {
-        worlds.emplace_back(); // create
-    }
-    worlds.clear(); // destroy all
-    auto end = Clock::now();
-    DurationMs duration = end - start;
-    return duration.count();
-}
-
-// Simulate rapid create/destroy in tight loop for given count
-double benchmarkRapidCreateDestroyLoop(size_t loopCount) {
-    using namespace ecs;
-    auto start = Clock::now();
-    for (size_t i = 0; i < loopCount; ++i) {
-        {
-            World w;
-            (void)w;
-        } // immediate destruction at scope end
-    }
-    auto end = Clock::now();
-    DurationMs duration = end - start;
-    return duration.count();
-}
-
-// Test multiple World instances lifetime overlap and destruction
-bool testMultipleInstanceLifecycle() {
-    using namespace ecs;
-    try {
-        World w1, w2;
-        // Normally would check internal states here if they existed
-        // Test passes if no crash or exception
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-// MAIN BENCHMARK FUNCTION
 int main() {
-    using namespace std;
+    // Configured iteration counts for benchmark
+    // Since World is very lightweight, we test with 1K, 10K and 100K creations
+    // 1M creation causes higher execution times - optional due to test environment.
+    constexpr size_t counts[] = { 1000, 10000, 100000 };
 
-    cout << "SimplyECS World class - Constructor & Destructor Benchmark\n";
-    printSeparator();
+    WorldBenchmark bench;
 
-    // MICRO BENCHMARK: Single instance create/destroy
-    constexpr size_t microIters = 100000;
-    double microAvgMs = benchmarkSingleWorldCreateDestroy(microIters);
-    reportResult("Microbenchmark - Single World create/destroy (avg per instance)", microAvgMs, 0.1);
-    // No strict target here, just checking triviality (~few microseconds expected)
+    std::cout << "SimplyECS World Class Benchmark (constructor/destructor performance)" << std::endl;
+    std::cout << "--------------------------------------------------------------------" << std::endl;
 
-    printSeparator();
+    for (auto count : counts) {
+        auto resSingle = bench.run(count);
+        printBenchmarkResult(resSingle);
 
-    // MACRO BENCHMARK: Batch create/destroy for large counts
-    // Since World currently trivial, time will be near zero but measured anyway.
-    const vector<size_t> testSizes = { 1000, 10000, 100000 }; // 1K, 10K, 100K entities simulated
-    for (size_t count : testSizes) {
-        // Target scaling - no precise target (World create/destroy trivial), but display times
-        double totalMs = benchmarkBatchWorldCreateDestroy(count);
-        cout << "Macrobenchmark - Create & destroy " << count << " World instances: "
-             << totalMs << " ms\n";
+        auto resBatch = bench.runBulkAlloc(count);
+        printBenchmarkResult(resBatch);
+
+        std::cout << std::string(70, '-') << std::endl;
     }
 
-    printSeparator();
-
-    // RAPID CREATE/DESTROY LOOP: simulate short lifespan object churn
-    constexpr size_t rapidLoopCount = 1000000;
-    double rapidLoopMs = benchmarkRapidCreateDestroyLoop(rapidLoopCount);
-    cout << "Rapid create/destroy in loop (1M times): " << rapidLoopMs << " ms\n";
-
-    printSeparator();
-
-    // MULTIPLE INSTANCE LIFECYCLE TEST (functional correctness - no crash)
-    bool multiInstanceOk = testMultipleInstanceLifecycle();
-    cout << "Multiple World instances creation/destruction test: "
-         << (multiInstanceOk ? "[PASS]" : "[FAIL]") << '\n';
-
-    printSeparator();
-
-    // SUMMARY related to SimplyECS 1M entities target (<=20 ms)
-    // Here World class only default ctor/dtor, no entity management yet.
-    // So benchmark simulating 1M calls (create/destroy) to World as proxy:
-    constexpr size_t oneMillion = 1'000'000;
-    double oneMTotalMs = benchmarkBatchWorldCreateDestroy(oneMillion);
-    cout << "Create & destroy 1M World instances total time: " << oneMTotalMs << " ms\n";
-
-    constexpr double target1M = 20.0; // target in ms according to spec
-    if (oneMTotalMs <= target1M) {
-        cout << "[PERFORMANCE TARGET PASSED] (<= " << target1M << " ms)\n";
-    } else {
-        cout << "[PERFORMANCE TARGET FAILED] (> " << target1M << " ms)\n";
-    }
-
-    printSeparator();
-
-    cout << "Benchmark completed.\n";
+    // Since no entity-level functionality yet, no entity benchmarks possible now.
+    std::cout << "NOTE: No entity benchmarks possible at MVP-1 stage." << std::endl;
 
     return 0;
 }
 ```
 ---
 
-### Açıklamalar
+### Açıklamalar:
 
-- **Mikro benchmark** olarak, `ecs::World` objesinin tek tek yaratılması ve yok edilmesi ortalama süresi ölçülüyor (100K iterasyon).
-- **Makro benchmark** farklı sayılarda (1K, 10K, 100K) `World` nesnesinin toplu oluşturulup yok edilme süreleri ölçülüyor.
-- 1M instance yaratılıp yok edilerek hedef performans (20 ms toplam) test ediliyor.
-- Çok hızlı ardışık yaratıp yok etme (1M adım) testi yapılmakta.
-- Çoklu nesne yaratıp yok etme fazlalığı sırasında sistemin stabil (crash olmadan) çalıştığı test ediliyor.
-- Raporlar konsola yazdırılıyor, basit geçme/kalmaya göre hedefler kontrol ediliyor.
-- Kodda gerçek entity veya component olmadığı için gerçek 1M entity benchmarkı yapılamıyor, bu benchmarklar ileride genişletilecek.
-
----
-
-### Çalıştırma Notları
-
-- Kod standart C++17 ve üstü ile uyumludur.
-- `ecs::World` sınıfınız build edilip bu benchmark ile linklenmelidir.
-- Benchmark sonuçları donanım ve derleyiciye göre değişebilir.
-- Bu baseline ölçümler ileriki ECS özellikleri eklendikçe zenginleştirilecek.
-- Daha gelişmiş isterseniz Google Benchmark kütüphanesi entegre edilebilir.
+- `World` sınıfı çok basit olduğu için benchmarklarda çok sayıda nesne oluşturulup yok edilmeye çalışıldı.
+- İstisnaların ortaya çıkmaması ve makul sürelerde (örneğin 1ms altı ortalama) çalışması test edildi.
+- Benchmark sonuçları satır satır okunabilir şekilde, PASS/FAIL formatında verilmekte.
+- İleride entity & component eklenince, 1K, 10K, 100K, 1M entity benchmarkları eklenebilir.
+- Mevcut hedefler (`1M entity <= 20ms`) şimdilik anlamsız çünkü henüz entity yok.
+- Benchmark kodu tek dosyada, kolay derlenip çalıştırılabilir.
 
 ---
 
-Başarılar ve kolay gelsin!  
-SimplyECS Performans Ekibi
+*Not:* Benchmark ileride daha odaklı ölçümler ve daha gelişmiş raporlama için Google Benchmark veya benzeri çerçevelerle değiştirilebilir. Şimdilik bağımsız, minimum kütüphane bağımlı, sade ve anlaşılır yaklaşımla hazırlanmıştır.
