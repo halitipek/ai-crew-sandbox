@@ -1,53 +1,67 @@
-#!/usr/bin/env python3
-"""
-Very‑small bootstrap: moves MVP‑1 card to Dev, creates feature branch,
-adds empty World.hpp/cpp and opens a Pull Request, then pings Slack.
-Requires: PyGithub 2.x, requests.
-"""
-
-import os, requests, base64
+import os, json, requests
 from github import Github
 
-REPO = "halitipek/ai-crew-sandbox"
-ISSUE_NUMBER = 1              # MVP‑1
-BRANCH = "feature/mvp1_world_skeleton"
+REPO_FULL = "halitipek/ai-crew-sandbox"
+GQL_URL    = "https://api.github.com/graphql"
+TOKEN      = os.environ["GH_PAT"]
+HEADERS    = {"Authorization": f"Bearer {TOKEN}"}
 
-gh = Github(os.environ["GH_PAT"])
-repo = gh.get_repo(REPO)
+gh = Github(TOKEN)
+repo = gh.get_repo(REPO_FULL)
 
-# 1) Create branch from main
-main_sha = repo.get_branch("main").commit.sha
-repo.create_git_ref(ref=f"refs/heads/{BRANCH}", sha=main_sha)
+# ------------------------------------------------------------
+def gql(query: str, variables: dict = None):
+    resp = requests.post(GQL_URL,
+                         headers=HEADERS,
+                         json={"query": query, "variables": variables or {}})
+    resp.raise_for_status()
+    return resp.json()
 
-# 2) Add empty files
-def add(path):
-    repo.create_file(
-        path, f"feat: add {path}", "", branch=BRANCH
-    )
-add("src/ecs/World.hpp")
-add("src/ecs/World.cpp")
+def fetch_ids():
+    # 1) Proje ID'si (SimplyECS Kanban)
+    q_proj = """
+      query { viewer { projectsV2(first:20) { nodes { id title } } } }
+    """
+    nodes = gql(q_proj)["data"]["viewer"]["projectsV2"]["nodes"]
+    proj = next(n for n in nodes if n["title"] == "SimplyECS Kanban")
+    project_id = proj["id"]
 
-# 3) Open PR
-pr = repo.create_pull(
-    title="feat: MVP‑1 World skeleton",
-    body="Closes #1 – adds empty World class files.",
-    base="main", head=BRANCH,
-)
+    # 2) Status alanı ID'si
+    q_field = """
+      query($p:ID!){ node(id:$p){
+        ... on ProjectV2 { field(name:"Status"){ id } } } }
+    """
+    field_id = gql(q_field, {"p": project_id})["data"]["node"]["field"]["id"]
 
-# 4) Link issue & move project card to Dev
-issue = repo.get_issue(number=ISSUE_NUMBER)
-issue.create_comment(f"Opened PR #{pr.number}")
-issue.edit(state="open")              # ensure open
-project = repo.get_projects()[0]      # SimplyECS Kanban
-column = next(c for c in project.get_columns() if c.name == "Dev")
-card = next(card for card in column.get_cards() if card.get_content() and card.get_content().number == ISSUE_NUMBER) \
-       if False else project.create_card(content_id=issue.id, content_type="Issue")
-card.move("top", column.id)
+    # 3) 'Dev' seçeneği ID'si
+    q_opts = """
+      query($f:ID!){ node(id:$f){
+        ... on ProjectV2SingleSelectField { options { id name } } } }
+    """
+    opts = gql(q_opts, {"f": field_id})["data"]["node"]["options"]
+    dev_option = next(o for o in opts if o["name"] == "Dev")["id"]
 
-# 5) Slack ping
-requests.post(
-    os.environ["SLACK_WEBHOOK"],
-    json={"text": f":rocket: PR *#{pr.number}* opened for MVP‑1 <{pr.html_url}|view>"}
-)
+    return project_id, field_id, dev_option
 
-print("✅ Done!")
+PROJECT_ID, STATUS_FIELD_ID, DEV_OPTION_ID = fetch_ids()
+# ------------------------------------------------------------
+
+def move_to_dev(item_id: str):
+    mutation = """
+      mutation($proj:ID!,$item:ID!,$field:ID!,$opt:ID!){
+        updateProjectV2ItemFieldValue(input:{
+          projectId:$proj itemId:$item fieldId:$field
+          value:{ singleSelectOptionId:$opt }})
+        { item { id } } }
+    """
+    gql(mutation, {
+        "proj": PROJECT_ID,
+        "item": item_id,
+        "field": STATUS_FIELD_ID,
+        "opt": DEV_OPTION_ID
+    })
+
+# --- PR, issue ve item_id oluşturulduktan hemen sonra çağır ---
+# item_id = issue.node_id
+# move_to_dev(item_id)
+# print("Moved card to Dev ✅")
