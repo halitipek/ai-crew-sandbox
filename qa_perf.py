@@ -345,11 +345,15 @@ def process_pr():
         # Benchmark dosyası oluştur
         benchmark_file_path = "src/benchmark/ClassBenchmark.cpp"
         
+        # Format code files string separately to avoid backslash in f-string expression
+        formatted_code_files = chr(10).join([f"Dosya: {path}\n```cpp\n{content}\n```"
+                                                for path, content in code_files.items()])
+
         # Benchmark kodu üret
         benchmark_prompt = f"""
         Aşağıdaki C++ kodları için benchmark testleri yaz:
         
-        {chr(10).join([f"Dosya: {path}\n```cpp\n{content}\n```" for path, content in code_files.items()])}
+        {formatted_code_files}
         
         Kod analizi:
         {code_analysis}
