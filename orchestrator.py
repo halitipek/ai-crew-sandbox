@@ -133,13 +133,18 @@ def main():
             repo.create_file(path, f"feat: add {path}", "", branch=BRANCH)
             print("➕  Added", path)
 
-    # 3) Open PR (idempotent: returns existing if same head)
-    pr = repo.create_pull(
-        title="feat: MVP‑1 World skeleton",
-        body="Closes #1 – adds empty World class files.",
-        base="main", head=BRANCH
-    )
-    print("🔗  PR opened:", pr.html_url)
+    # 3) Open (or reuse) PR
+    pulls = repo.get_pulls(state="open", head=f"{repo.owner.login}:{BRANCH}")
+    if pulls.totalCount:
+        pr = pulls[0]
+        print("🔗  PR already exists:", pr.html_url)
+    else:
+        pr = repo.create_pull(
+            title="feat: MVP‑1 World skeleton",
+            body="Closes #1 – adds empty World class files.",
+            base="main", head=BRANCH
+        )
+        print("🔗  PR opened:", pr.html_url)
 
     # 4) Link issue & move card
     issue = repo.get_issue(ISSUE_NUMBER)
