@@ -174,7 +174,7 @@ def review_code(pr_title, pr_body, changes):
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": user_message}
             ],
-            temperature=0.1,
+            temperature=1,
             max_completion_tokens=2000  # max_tokens yerine max_completion_tokens kullan
         )
         

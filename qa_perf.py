@@ -170,7 +170,7 @@ def generate_tests(prompt):
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=1,
             max_completion_tokens=3000
         )
         
@@ -204,7 +204,7 @@ def generate_benchmark(prompt):
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=1,
             max_completion_tokens=3000
         )
         
@@ -239,7 +239,7 @@ def analyze_code(file_contents):
                 {"role": "system", "content": "Sen bir kod analizi yapan QA uzmanısın."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=1,
             max_completion_tokens=2000
         )
         

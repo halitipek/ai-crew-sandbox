@@ -149,7 +149,7 @@ def generate_code(prompt, model=CORE_ENG_1_MODEL):
                 {"role": "system", "content": system_message},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
+            temperature=1,
             max_completion_tokens=4000
         )
         
@@ -181,8 +181,8 @@ def analyze_issue(issue_content):
                 {"role": "system", "content": "Sen bir görev analizi yapan yazılım mühendisisin."},
                 {"role": "user", "content": prompt}
             ],
-            temperature=0.1,
-            max_completion_tokens=1000
+            temperature=1,
+            max_completion_tokens=2000
         )
         
         return response.choices[0].message.content
