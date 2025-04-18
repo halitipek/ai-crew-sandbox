@@ -57,8 +57,8 @@ def fetch_project_ids() -> tuple[str, str, str]:
       }"""
 
     owner, name = REPO_FULL.split("/")
-    nodes = gql(q_proj, {"owner": owner, "name": name})["data"]["viewer"]["projectsV2"]["nodes"] + \
-            gql(q_proj, {"owner": owner, "name": name})["data"]["repository"]["projectsV2"]["nodes"]
+    data = gql(q_proj, {"owner": owner, "name": name})["data"]
+    nodes = data["viewer"]["projectsV2"]["nodes"] + data["repository"]["projectsV2"]["nodes"]
 
     # Başlığında 'SimplyECS' geçen ilk projeyi al, yoksa dizinin ilkini kullan
     proj = next((n for n in nodes if "SimplyECS" in n["title"]), nodes[0])
@@ -96,6 +96,15 @@ def fetch_project_ids() -> tuple[str, str, str]:
         o for o in status_field["options"]
         if o["name"].lower() == "dev"
     )["id"]
+
+    # Eğer id kısa (< 32 char) ise Node ID'yi sorgula
+    if len(dev_opt) < 30:
+        q_opt = """
+        query($p:ID!){ node(id:$p){
+            ... on ProjectV2SingleSelectFieldOption { id } } }
+        """
+        dev_opt = gql(q_opt, {"p": dev_opt})["data"]["node"]["id"]
+
 
     print("🗂️  Status field ID:", field_id[:8], "… — Dev option ID:", dev_opt[:8], "…")
     return project_id, field_id, dev_opt
@@ -148,8 +157,8 @@ def main():
 
     # 4) Link issue & move card
     issue = repo.get_issue(ISSUE_NUMBER)
-    issue.create_comment(f"PR #{pr.number} opened for MVP‑1")
-    move_issue_to_dev(issue.node_id)
+    item_id = getattr(issue, "node_id", issue.raw_data["node_id"])
+    move_issue_to_dev(item_id)
 
     # 5) Slack ping
     requests.post(SLACK, json={"text": SLACK_TEXT.format(pr=pr.number, url=pr.html_url)})
