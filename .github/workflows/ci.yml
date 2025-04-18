@@ -1,0 +1,28 @@
+name: CI
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dummy build
+        run: echo "✅ Build placeholder"
+
+  notify-slack:
+    if: ${{ success() }}
+    needs: build-test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: slackapi/slack-github-action@v1.25.0
+        with:
+          payload: |
+            {
+              "text": ":white_check_mark: *CI passed* for ${{ github.repository }} — `${{ github.workflow }}`"
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }}
