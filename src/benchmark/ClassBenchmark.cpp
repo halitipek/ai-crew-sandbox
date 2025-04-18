@@ -1,172 +1,171 @@
 ```cpp
 // File: src/benchmark/ClassBenchmark.cpp
-// Author: Performance Team
-// Description: Benchmark tests for ecs::World MVP stage (default ctor & dtor).
-// Measures construction/destruction time over multiple iterations and reports summary.
-// Since currently World has minimal functionality, focus on measuring creation/destruction overhead.
+//
+// Benchmark tests for ecs::World class constructor and destructor.
+//
+// Even if ecs::World currently has minimal functionality (only default ctor/dtor),
+// we'll establish a micro-benchmark template to measure creation & destruction costs
+// for large numbers of World instances and single (empty) World instances.
+//
+// Future ECS features (entity/component creation, access, deletion) will extend this benchmark.
+//
+// Requirements:
+// - Benchmark World creation & destruction for 1K, 10K, 100K, 1M entities scale (entity count simulated).
+// - Report durations in ms with clear formatting.
+// - Check passed/failed based on simple thresholds where applicable.
+// - Output summary to console.
+//
+// Note:
+// Since ecs::World currently doesn't manage entities internally,
+// to emulate the benchmark workload we will create 
+// multiple World instances sequentially in place of entities,
+// simulating construction & destruction overhead.
+//
+// Performance target for "1M entity <= 20 ms" here will mean:
+// Creating and destroying 1M World instances within 20 ms, which is a very loose proxy.
+//
+// In a real scenario, World would manage entities internally,
+// and benchmarks would measure entity ops on a single World instance.
+//
+// Dependencies: Must include chrono, iostream, vector, and tester-friendly formatting.
+//
 
 #include <chrono>
 #include <iostream>
 #include <vector>
-#include <string>
-#include <iomanip>
-#include <memory>
-#include <cassert>
+#include <iomanip> // for setw
 
 #include "ecs/World.h"
 
-using namespace ecs;
-using namespace std::chrono;
+namespace bench {
 
-// Simple RAII timer to measure elapsed time in milliseconds
-class ScopedTimer {
-public:
-    ScopedTimer() : start_(high_resolution_clock::now()) {}
-    void reset() { start_ = high_resolution_clock::now(); }
-    double elapsedMs() const {
-        return duration<double, std::milli>(high_resolution_clock::now() - start_).count();
-    }
-private:
-    time_point<high_resolution_clock> start_;
-};
+// Types
+using Clock = std::chrono::high_resolution_clock;
+using ms = std::chrono::duration<double, std::milli>;
 
 struct BenchmarkResult {
     std::string testName;
-    std::size_t iterations;
-    double totalMs;
-    double avgMs;
-    bool passed;
+    size_t entityCount;  // simulated entities count (number of World instances)
+    double durationMs;
+    bool passed;        // based on thresholds
 };
 
 class WorldBenchmark {
 public:
-    WorldBenchmark() = default;
+    // Run default ctor + dtor test by creating and destroying N World instances sequentially.
+    // Returns elapsed time in ms.
+    static double ctorDtorMultiple(size_t count) {
+        auto start = Clock::now();
 
-    // Microbenchmark: create & destroy a single World N times, measure cumulative & avg times
-    BenchmarkResult benchmarkCreateDestroy(std::size_t iterations) {
-        BenchmarkResult result;
-        result.testName = "World Create/Destroy (" + std::to_string(iterations) + " iterations)";
-        result.iterations = iterations;
-
-        ScopedTimer timer;
-
-        for(std::size_t i = 0; i < iterations; ++i) {
-            World w;
-            (void)w; // avoid unused variable warning
-        }
-        result.totalMs = timer.elapsedMs();
-        result.avgMs = result.totalMs / (double)iterations;
-
-        // For MVP, assume creation+destruction per World should be < 0.5 ms (arbitrary small threshold)
-        result.passed = (result.avgMs < 0.5);
-
-        return result;
-    }
-
-    // Macro benchmark: simulate entity count indirectly by constructing/destroying multiple Worlds in parallel
-    // Since World has no entity management yet, just measure create/destroy times for different batch sizes.
-    BenchmarkResult benchmarkMultipleWorlds(std::size_t worldCount) {
-        BenchmarkResult result;
-        result.testName = "Bulk World Create/Destroy (" + std::to_string(worldCount) + " Worlds)";
-        result.iterations = 1;
-
-        ScopedTimer timer;
         {
-            // Vector of unique_ptr to Worlds to ensure delayed destruction all at once
-            std::vector<std::unique_ptr<World>> worlds;
-            worlds.reserve(worldCount);
-
-            for(std::size_t i = 0; i < worldCount; ++i) {
-                worlds.emplace_back(std::make_unique<World>());
+            std::vector<ecs::World> worlds;
+            worlds.reserve(count);
+            for (size_t i = 0; i < count; ++i) {
+                worlds.emplace_back(); // construct
             }
-            // Worlds destroyed here when vector goes out of scope
+            // worlds destructor called at scope end
         }
-        result.totalMs = timer.elapsedMs();
-        result.avgMs = result.totalMs / (double)worldCount;
 
-        // Passing criteria: For a single World > 0.5ms is fail (arbitrary small threshold)
-        result.passed = (result.avgMs < 0.5);
-
-        return result;
+        auto end = Clock::now();
+        ms elapsed = end - start;
+        return elapsed.count();
     }
 
-    // Since no entities or components exist yet, simulate timing for future API placeholders at different sizes.
-    // Stub for 1K, 10K, 100K, 1M entity scenario benchmarks as place holders.
-    void benchmarkPlaceHolderEntities(std::size_t entityCount) {
-        std::cout << "Benchmark placeholder for " << entityCount << " entities. (MVP stage - no operation)\n";
+    // Run single World ctor/dtor test multiple times and measure average time per instance in ns.
+    static double ctorDtorSingleAvgTimeNs(size_t iterations) {
+        auto start = Clock::now();
+
+        for (size_t i = 0; i < iterations; ++i) {
+            ecs::World w;
+            (void)w; // suppress unused warning
+        }
+
+        auto end = Clock::now();
+        auto totalNs = std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count();
+        return double(totalNs) / iterations;
     }
 
-    void runAll() {
-        std::cout << "=== SimplyECS World Class Benchmark (MVP-stage) ===\n\n";
+    // Print a result line to console in aligned format
+    static void printResult(const BenchmarkResult &result) {
+        std::cout << std::left << std::setw(30) << result.testName
+                  << std::right << std::setw(12) << result.entityCount
+                  << std::setw(15) << std::fixed << std::setprecision(3) << result.durationMs << " ms"
+                  << std::setw(12) << (result.passed ? "PASSED" : "FAILED")
+                  << "\n";
+    }
 
-        // Microbenchmark: single World create/destroy repeated 100k times
-        auto micro = benchmarkCreateDestroy(100'000);
-        printResult(micro);
+    // Run benchmark battery for different scales and print summary.
+    static void runAll() {
+        std::cout << "===== SimplyECS World Benchmark =====\n";
+        std::cout << "Testing ecs::World default ctor+dtor overhead.\n\n";
 
-        // Macro benchmark: bulk create/destroy Worlds - testing 1K, 10K Worlds to simulate scale
-        auto bulk1k = benchmarkMultipleWorlds(1'000);
-        printResult(bulk1k);
+        std::cout << std::left << std::setw(30) << "Test"
+                  << std::right << std::setw(12) << "Count"
+                  << std::setw(15) << "Duration"
+                  << std::setw(12) << "Result" << "\n";
+        std::cout << std::string(69, '=') << "\n";
 
-        auto bulk10k = benchmarkMultipleWorlds(10'000);
-        printResult(bulk10k);
+        // Test scales simulating entity counts (number of World instances)
+        std::vector<size_t> testCounts = { 1000, 10000, 100000, 1000000 };
 
-        // Placeholder benchmarks for entity sizes - no operation yet
-        const std::size_t sizes[] = {1'000, 10'000, 100'000, 1'000'000};
-        for(auto size : sizes)
-            benchmarkPlaceHolderEntities(size);
+        // Threshold for 1M count test: total time <= 20ms
+        constexpr double thresholdMs_1M = 20.0;
 
-        std::cout << "\n=== Summary ===\n";
-        printPassFail(micro);
-        printPassFail(bulk1k);
-        printPassFail(bulk10k);
+        // Run bulk ctor/dtor tests
+        for (size_t count : testCounts) {
+            double elapsedMs = ctorDtorMultiple(count);
+
+            // Pass criteria:
+            // For 1M entities test, enforce max 20ms
+            // For smaller scales, pass unconditionally (no useful threshold yet)
+            bool passed = true;
+            if (count == 1000000) {
+                passed = (elapsedMs <= thresholdMs_1M);
+            }
+
+            BenchmarkResult result{
+                "World ctor+dtor x count",
+                count,
+                elapsedMs,
+                passed
+            };
+            printResult(result);
+        }
+
+        // Micro-benchmark average time for single World ctor+dtor
+        constexpr size_t microIterations = 1000000;
+        double avgNs = ctorDtorSingleAvgTimeNs(microIterations);
+
+        std::cout << "\nMicrobenchmark:\n";
+        std::cout << "Average World ctor+dtor (single instance): "
+                  << std::fixed << std::setprecision(3) << avgNs << " ns\n";
 
         std::cout << "\nBenchmark complete.\n";
     }
-
-private:
-
-    void printResult(const BenchmarkResult& res) {
-        std::cout <<
-            std::left << std::setw(40) << res.testName <<
-            "Total: " << std::fixed << std::setprecision(3) << res.totalMs << " ms, " <<
-            "Avg: " << res.avgMs << " ms per iteration, " <<
-            "Result: " << (res.passed ? "PASS" : "FAIL") << "\n";
-    }
-
-    void printPassFail(const BenchmarkResult& res) {
-        std::cout << res.testName << ": " << (res.passed ? "[PASS]" : "[FAIL]") << "\n";
-    }
 };
 
-int main() {
-    // Run the benchmark suite for ecs::World MVP
-    WorldBenchmark bench;
-    bench.runAll();
+} // namespace bench
 
+int main() {
+    bench::WorldBenchmark::runAll();
     return 0;
 }
 ```
+---
+
+**Açıklamalar:**
+
+- Şu anki kodda `ecs::World` gerçek entity yönetmediği için entity bazlı mikrobenchmark yapılamaz. 
+- Testi entity sayısı olarak, o sayıda `ecs::World` nesnesinin oluşturulup yok edilmesiyle proxy olarak ölçüm yapıyoruz.
+- Benchmark sonuçları ms cinsinden raporlanıyor, 1M nesne için hedef süre 20 ms olarak kondu.
+- Microbenchmark ile tek `ecs::World` nesnesinin oluşturulma-yok edilme süresi nanosaniye cinsinden hesaplanıyor.
+- Genel olarak benchmark tasarımı gelecekte ek fonksiyonlar eklenince hızla genişletilebilir.
+- Sonuçlar konsola düzgün formatta yazdırılır ve belirlenen eşik değerlere göre "PASSED"/"FAILED" döner.
 
 ---
 
-### Açıklamalar:
+**Kullanım:**
 
-- `World` sınıfının şu anki hali sadece varsayılan constructor ve destructor içerdiğinden benchmark testleri öncelikle bu çağrıların CPU süresi ve bellek oynanımı açısından çok hızlı olduğunu doğrulamak içindir.
-  
-- **Mikro benchmark:** `benchmarkCreateDestroy` fonksiyonu, tek bir `World` nesnesinin oluşturulup yok edilmesi süresini 100.000 kez ölçerek "ortalama süre" çıkarır. Küçük bir seuild (örneğin 0.5 ms) geçilmemelidir.
-
-- **Makro benchmark:** `benchmarkMultipleWorlds` fonksiyonu, örneğin 1000 veya 10,000 `World` nesnesini ardışık olarak yaratır ve tek seferde yok eder. Böylece büyük hacimlerdeki işlemler test edilir.
-
-- Henüz `World` içinde entity ya da component yönetimi yok. Bu yüzden bu benchmark'lar temel oluşturur. İleride eklenecek fonksiyonlarla birlikte daha kapsamlı benchmark hazırlanmalıdır.
-
-- Konsola raporlama, okunabilir sütunlar ve formata uygun.
-
-- Performans hedefleri (örneğin 1M entity <= 20 ms) bu aşamada uygulanmadı çünkü `World` sınıfı yaratma/yok etme ile entity yönetimi fonksiyonları yok.
-
-- Stres testi olarak çok sayıda `World` nesnesi örnekleniyor ki ileride çok sayıda entity içeren World performansı ölçülmeye hazır olsun.
-
-- Bellek sızıntısı, tasarım gereği, bu benchmark çalıştığında valgrind/memcheck gibi araçlar ile ayrıca kontrol edilmelidir.
-
----
-
-Bu benchmark kodunu projenizin uygun build sistemiyle derleyip çalıştırarak `ecs::World` temel performans kriterlerini test edip takip edebilirsiniz. İleride fonksiyonlar eklendikçe benchmark dosyasını genişletiniz.
+- `SimplyECS` kütüphanesi ile `ecs/World.h` başlık dosyasını içeren derleme ortamında bu benchmark derlenip çalıştırılabilir.
+- Konsol çıktısı ölçüm değerlerini ve test sonuçlarını gösterir.
+- Daha gelişmiş entity/component işlemleri eklendikçe benchmark da genişletilir.
