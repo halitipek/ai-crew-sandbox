@@ -30,7 +30,7 @@ def load_config():
         return {}
 
 CONFIG = load_config()
-QA_PERF_MODEL = CONFIG.get('qa_perf', {}).get('model', 'gpt-4.1-mini')
+QA_PERF_MODEL = CONFIG.get('qa_perf', {}).get('model', 'gpt-3.5-turbo-0125')
 
 # Ortam değişkenlerini kontrol et
 TOKEN = os.environ.get("GH_PAT")

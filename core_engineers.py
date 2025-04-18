@@ -30,8 +30,8 @@ def load_config():
         return {}
 
 CONFIG = load_config()
-CORE_ENG_1_MODEL = CONFIG.get('core_eng_1', {}).get('model', 'gpt-4o')
-CORE_ENG_2_MODEL = CONFIG.get('core_eng_2', {}).get('model', 'gpt-4o')
+CORE_ENG_1_MODEL = CONFIG.get('core_eng_1', {}).get('model', 'gpt-3.5-turbo-0125')
+CORE_ENG_2_MODEL = CONFIG.get('core_eng_2', {}).get('model', 'gpt-3.5-turbo-0125')
 
 # Ortam değişkenlerini kontrol et
 TOKEN = os.environ.get("GH_PAT")
